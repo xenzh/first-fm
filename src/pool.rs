@@ -3,6 +3,7 @@ use std::io::{Result, Error};
 
 use r2d2::ManageConnection;
 
+// ----------------------------------------------------------------
 
 #[derive(Debug)]
 pub struct TcpStreamManager {
