@@ -6,18 +6,21 @@ use std::convert::From;
 
 use futures::future::Future;
 
+use native_tls::Error as TlsError;
+
 use lastfm::error::Error as LastfmError;
 
 // ----------------------------------------------------------------
 
 pub type Result<T> = StdResult<T, Error>;
-pub type Response<'de, T> = Box<Future<Item = T, Error = Error> + Send + 'de>;
+pub type Response<'de, T> = Box<Future<Item=T, Error=Error> + Send + 'de>;
 
 // ----------------------------------------------------------------
 
 #[derive(Debug)]
 pub enum Error {
     Io(IoError),
+    Tls(TlsError),
     Lastfm(LastfmError),
 }
 
@@ -29,6 +32,10 @@ impl Error {
         Error::Io(IoError::new(kind, inner))
     }
 
+    pub fn tls(inner: TlsError) -> Error {
+        Error::Tls(inner)
+    }
+
     pub fn lastfm(inner: LastfmError) -> Error {
         Error::Lastfm(inner)
     }
@@ -37,6 +44,12 @@ impl Error {
 impl From<IoError> for Error {
     fn from(src: IoError) -> Self {
         Error::Io(src)
+    }
+}
+
+impl From<TlsError> for Error {
+    fn from(src: TlsError) -> Self {
+        Error::tls(src)
     }
 }
 
@@ -52,6 +65,7 @@ impl Display for Error {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         match *self {
             Error::Io(ref inn) => write!(f, "I/O error: {}", inn),
+            Error::Tls(ref inn) => write!(f, "HTTPS error: {}", inn),
             Error::Lastfm(ref inn) => write!(f, "Lastfm error: {}", inn),
         }
     }
@@ -61,6 +75,7 @@ impl StdError for Error {
     fn description(&self) -> &str {
         match *self {
             Error::Io(ref inn) => inn.description(),
+            Error::Tls(ref inn) => inn.description(),
             Error::Lastfm(ref inn) => inn.description(),
         }
     }
@@ -68,6 +83,7 @@ impl StdError for Error {
     fn cause(&self) -> Option<&StdError> {
         match *self {
             Error::Io(ref inn) => Some(inn),
+            Error::Tls(ref inn) => Some(inn),
             Error::Lastfm(ref inn) => Some(inn),
         }
     }

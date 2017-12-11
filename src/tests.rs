@@ -14,15 +14,9 @@ fn client_single_request() {
         4,
     ).unwrap();
 
-    let mut storage = String::new();
-
-    let fut = client.get(
-        &mut storage,
-        Method::UserGetInfo,
-        Params::GetInfo { user: "xenzh" },
-    );
-
-    let res: Result<GetInfo> = core.run(fut);
+    let mut _me = String::new();
+    let info = client.get(&mut _me, Params::GetInfo { user: "xenzh" });
+    let res: Result<GetInfo> = core.run(info);
 
     println!("Response: {:?}", res.unwrap());
 }
@@ -41,21 +35,14 @@ fn client_double_request() {
         4,
     ).unwrap();
 
-    let mut sme = String::new();
-    let me = client.get(
-        &mut sme,
-        Method::UserGetInfo,
-        Params::GetInfo { user: "xenzh" },
-    );
+    let mut _me = String::new();
+    let me = client.get(&mut _me, Params::GetInfo { user: "xenzh" });
 
-    let mut sigor = String::new();
-    let igor = client.get(
-        &mut sigor,
-        Method::UserGetInfo,
-        Params::GetInfo { user: "anmult" },
-    );
+    let mut _igor = String::new();
+    let igor = client.get(&mut _igor, Params::GetInfo { user: "anmult" });
 
     let info = me.join(igor);
+
     let res: Result<(GetInfo, GetInfo)> = core.run(info);
 
     println!("Response: {:?}", res);
