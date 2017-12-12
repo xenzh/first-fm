@@ -12,7 +12,6 @@ extern crate async_http_client;
 
 mod pool;
 mod utils;
-mod builder;
 mod client;
 
 #[cfg(test)]
