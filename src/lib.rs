@@ -20,6 +20,7 @@ mod tests;
 
 // ----------------------------------------------------------------
 
+pub static LASTFM_API_BASE_URL: &str = "https://ws.audioscrobbler.com/2.0/";
+
 pub use utils::{Error, Result, Response};
-pub use builder::Builder;
-pub use client::Client;
+pub use client::{Client, Builder};

@@ -19,8 +19,85 @@ use async_http_client::HttpRequest;
 
 // ----------------------------------------------------------------
 
+use super::LASTFM_API_BASE_URL;
+
 use pool::TcpStreamManager;
 use utils::{Error, Result, Response};
+
+// ----------------------------------------------------------------
+
+pub struct Builder {
+    base_url: String,
+    connections: u32,
+    api_key: Option<String>,
+    secret: Option<String>,
+    handle: Option<Handle>,
+}
+
+impl Builder {
+    pub fn new() -> Builder {
+        Builder {
+            base_url: LASTFM_API_BASE_URL.to_owned(),
+            connections: 2,
+            api_key: None,
+            secret: None,
+            handle: None,
+        }
+    }
+
+    pub fn build(self) -> Result<Client> {
+        let base_url: Url = self.base_url.parse().map_err(|e| Error::build(e))?;
+        if self.connections < 1 {
+            return Err(Error::build("Need to have at least 1 connection to operate"));
+        }
+        let api_key = self.api_key.ok_or(Error::build("Missing API key"))?;
+        let handle = self.handle.ok_or(Error::build("Missing Tokio reactor core handle"))?;
+
+        let addr = base_url
+            .to_socket_addrs()?
+            .next()
+            .ok_or(Error::build("No socket address found in base url"))?;
+
+        let pool = ConnPool::builder()
+            .max_size(self.connections)
+            .build(TcpStreamManager::new(addr))
+            .map_err(|e| Error::build(e))?;
+
+        Ok(Client {
+            base_url: base_url,
+            api_key: api_key,
+            secret: self.secret,
+            session: None,
+            handle: handle,
+            pool: pool,
+        })
+    }
+
+    pub fn base_url(mut self, url: &str) -> Builder {
+        self.base_url = url.to_owned();
+        self
+    }
+
+    pub fn connections(mut self, connection_count: u32) -> Builder {
+        self.connections = connection_count;
+        self
+    }
+
+    pub fn api_key(mut self, api_key: &str) -> Builder {
+        self.api_key = Some(api_key.to_owned());
+        self
+    }
+
+    pub fn handle(mut self, handle: Handle) -> Builder {
+        self.handle = Some(handle);
+        self
+    }
+
+    pub fn secret(mut self, secret: &str) -> Builder {
+        self.secret = Some(secret.to_owned());
+        self
+    }
+}
 
 // ----------------------------------------------------------------
 
@@ -82,7 +159,6 @@ macro_rules! send {
 
 // ----------------------------------------------------------------
 
-#[derive(Debug)]
 pub struct Client {
     base_url: Url,
     api_key: String,
@@ -93,37 +169,8 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(
-        base_url: &str,
-        api_key: &str,
-        secret: Option<&str>,
-        handle: &Handle,
-        pool_size: u32
-    ) -> Result<Client> {
-        let url = Url::parse(base_url)
-            .map_err(|e| Error::io(IoErrorKind::InvalidInput, e))?;
-
-        let addr = url
-            .to_socket_addrs()?
-            .next()
-            .ok_or(Error::io(
-                IoErrorKind::AddrNotAvailable,
-                "no socket address",
-            ))?;
-
-        let pool = ConnPool::builder()
-            .max_size(pool_size)
-            .build(TcpStreamManager::new(addr))
-            .map_err(|e| Error::io(IoErrorKind::Other, e))?;
-
-        Ok(Client {
-            base_url: url,
-            api_key: api_key.to_owned(),
-            secret: secret.map(|s| s.to_owned()),
-            session: None,
-            handle: handle.clone(),
-            pool: pool,
-        })
+    pub fn builder() -> Builder {
+        Builder::new()
     }
 
     pub fn request<'rq, 'rsp, T, P>(
@@ -164,10 +211,6 @@ impl Client {
 
     pub fn is_authenticated(&self) -> bool {
         self.session.is_some()
-    }
-
-    pub fn set_session_key(&mut self, key: &str) {
-        self.session = Some(key.to_owned());
     }
 
     fn get_stream(&self) -> Result<TcpStream> {
