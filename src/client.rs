@@ -26,6 +26,13 @@ use utils::{Error, Result, Data};
 
 // ----------------------------------------------------------------
 
+/// Client builder
+///
+/// Base, desktop auth urls and TCP connection pool size are set to defaults.
+///
+/// To make `read` calls API key and Tokio reactor core handle have to be set.
+///
+/// To make `auth` and `write` calls secret has to be set.
 pub struct Builder {
     base_url: String,
     auth_url: String,
@@ -36,6 +43,7 @@ pub struct Builder {
 }
 
 impl Builder {
+    /// Constructs new client builder
     pub fn new() -> Builder {
         Builder {
             base_url: LASTFM_API_BASE_URL.to_owned(),
@@ -47,6 +55,7 @@ impl Builder {
         }
     }
 
+    /// Builds new client from builder configuration
     pub fn build(self) -> Result<Client> {
         let base_url: Url = self.base_url.parse().map_err(|e| Error::build(e))?;
         let auth_url: Url = self.auth_url.parse().map_err(|e| Error::build(e))?;
@@ -83,31 +92,37 @@ impl Builder {
         })
     }
 
+    /// Updates base API url
     pub fn base_url(mut self, url: &str) -> Builder {
         self.base_url = url.to_owned();
         self
     }
 
+    /// Updates base desktop auth url
     pub fn auth_url(mut self, url: &str) -> Builder {
         self.auth_url = url.to_owned();
         self
     }
 
+    /// Updates TCP connection pool size
     pub fn connections(mut self, connection_count: u32) -> Builder {
         self.connections = connection_count;
         self
     }
 
+    /// Sets API key
     pub fn api_key(mut self, api_key: &str) -> Builder {
         self.api_key = Some(api_key.to_owned());
         self
     }
 
+    /// Sets Tokio reactor core handle
     pub fn handle(mut self, handle: Handle) -> Builder {
         self.handle = Some(handle);
         self
     }
 
+    /// Sets API shared secret
     pub fn secret(mut self, secret: &str) -> Builder {
         self.secret = Some(secret.to_owned());
         self
@@ -174,6 +189,9 @@ macro_rules! send {
 
 // ----------------------------------------------------------------
 
+/// last.fm API client
+/// TODO: write something useful about low-level `request` and
+/// high-level `auth` and `scrobble` APIs
 pub struct Client {
     base_url: Url,
     auth_url: Url,
@@ -186,10 +204,48 @@ pub struct Client {
 }
 
 impl Client {
+    /// Returns new client builder
     pub fn builder() -> Builder {
         Builder::new()
     }
 
+    /// Main entry point of low-level `request` client API.
+    ///
+    /// Fetches given last.fm data object based on given request parameters.
+    /// Parameters type has to implement `RequestParams` trait and data type
+    /// has to implement LastfmType - both these traits and itheir implementations
+    /// can be found in [lastfm-parse-rs crate](https://xenzh.github.io/lastfm-parse-rs/).
+    ///
+    /// This method returns a future that won't ever resolve unless consumed by event loop.
+    ///
+    /// Note that this method somewhat awkwardly requires a mutable string to be supplied.
+    /// Reason for this is that all lastfm_parse_rs types heavily rely on so-called zero-cost
+    /// deserialization recently introduced in serde. The idea is that instead of copying, string
+    /// field values are borrowed directly from raw response body.
+    /// This sounds like a great performance saving at cost of some convenience: response body
+    /// must live as long as parsed object. And that's what this mutable string is here to store.
+    ///
+    /// ## Example:
+    /// ```
+    /// use tokio_core::reactor::Core;
+    /// use lastfm_parse_rs::user::{Params, GetInfo};
+    /// use first_fm::{Client, Result};
+    ///
+    /// let mut core = Core::new().unwrap();
+    /// let handle = core.handle();
+    ///
+    /// let client = Client::builder()
+    ///     .api_key(LASTFM_API_KEY)
+    ///     .handle(handle.clone())
+    ///     .build()
+    ///     .unwrap();
+    ///
+    /// let mut _buf = String::new();
+    /// let me = client.request(&mut _buf, Params::GetInfo { user: "xenzh" });
+    /// let res: Result<GetInfo> = core.run(info);
+    ///
+    /// println!("Result: {:?}", res);
+    /// ```
     pub fn request<'rq, 'rsp, T, P>(
         &self,
         storage: &'rsp mut String,
@@ -199,13 +255,15 @@ impl Client {
         P: RequestParams + Debug,
         T: LastfmType<'rsp> + Send + 'rsp,
     {
+        let is_post = params.needs_signature();
         let secret = self.secret.as_ref().map(|s| s.as_str());
-        let is_write = params.is_write();
+        let session = self.session.as_ref().map(|s| s.as_str());
 
-        match Request::new(self.base_url.as_str(), &self.api_key, secret, params).get_url() {
+        let rq = Request::new(self.base_url.as_str(), &self.api_key, secret, session, params);
+        match rq.get_url() {
             Ok(url) => {
                 println!("{}", url);
-                if is_write {
+                if is_post {
                     let base_url = self.base_url.clone();
                     request!(self, url, post!(base_url, url, storage))
                 } else {
@@ -216,6 +274,15 @@ impl Client {
         }
     }
 
+    /// This is a `high-level` client API method for one of the possible ways to authenticate.
+    ///
+    /// According to API documentation this path is intended to be used in standalone mobile apps,
+    /// but works fine from elsewhere (and is the easiest).
+    ///
+    /// Client is authenticated with given user credentials.
+    /// Once this method succeeds, client will be able to successfully call `write` API methods.
+    ///
+    /// Check https://www.last.fm/api/mobileauth for details.
     pub fn mobile_auth(&mut self, core: &mut Core, username: &str, password: &str) -> Result<()> {
         let mut _buf = String::new();
         let auth = self.request(
@@ -230,6 +297,13 @@ impl Client {
         Ok(())
     }
 
+    /// First phase of desktop auth path.
+    ///
+    /// It returns an url, that should be opened in user's browser.
+    /// User then should accept application request by clicking a button in 1 hour.
+    /// After that `finalize_desktop_auth()` should be called to complete auth process.
+    ///
+    /// Check https://www.last.fm/api/desktopauth and `finalize_desktop_auth()` for details.
     pub fn init_desktop_auth(&mut self, core: &mut Core) -> Result<Url> {
         let mut _buf = String::new();
         let get_token = self.request(&mut _buf, AuthParams::GetToken);
@@ -247,6 +321,14 @@ impl Client {
         Ok(url)
     }
 
+    /// Second phase of desktop auth path.
+    ///
+    /// This method should be called after `init_desktop_auth()` once user
+    /// allowed access to his profile on the page opened using first phase url.
+    ///
+    /// Once this method succeeds, client will be able to successfully call `write` API methods.
+    ///
+    /// Check https://www.last.fm/api/desktopauth and `init_desktop_auth()` for details.
     pub fn finalize_desktop_auth(&mut self, core: &mut Core) -> Result<()> {
         let mut _buf = String::new();
         let token = self.token.take().ok_or(Error::io(
@@ -261,6 +343,7 @@ impl Client {
         Ok(())
     }
 
+    /// Checks if the client is authenticated and therefore able to call `write` API methods
     pub fn is_authenticated(&self) -> bool {
         self.session.is_some()
     }

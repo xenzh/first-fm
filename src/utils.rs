@@ -12,21 +12,29 @@ use lastfm::error::Error as LastfmError;
 
 // ----------------------------------------------------------------
 
+/// Common result type for sync client operations
 pub type Result<T> = StdResult<T, Error>;
-//pub type Response<T> = Box<Future<Item=T, Error=Error> + Send>;
+
+/// Future type for last.fm data types returned in responses
 pub type Data<'de, T> = Box<Future<Item = T, Error = Error> + Send + 'de>;
 
 // ----------------------------------------------------------------
 
+/// Common error type for client operations
 #[derive(Debug)]
 pub enum Error {
+    /// Errors occured when trying to build a client
     Build(IoError),
+    /// Misc I/O errors
     Io(IoError),
+    /// Errors returned by TLS layer
     Tls(TlsError),
+    /// last.fm service and parsing errors
     Lastfm(LastfmError),
 }
 
 impl Error {
+    /// Constructs builder error
     pub fn build<E>(inner: E) -> Error
     where
         E: Into<Box<StdError + Send + Sync>>,
@@ -34,6 +42,7 @@ impl Error {
         Error::Build(IoError::new(IoErrorKind::InvalidInput, inner))
     }
 
+    /// Constructs I/O error
     pub fn io<E>(kind: IoErrorKind, inner: E) -> Error
     where
         E: Into<Box<StdError + Send + Sync>>,
@@ -41,10 +50,12 @@ impl Error {
         Error::Io(IoError::new(kind, inner))
     }
 
+    /// Constructs TLS error
     pub fn tls(inner: TlsError) -> Error {
         Error::Tls(inner)
     }
 
+    /// Constructs last.fm API/parse error
     pub fn lastfm(inner: LastfmError) -> Error {
         Error::Lastfm(inner)
     }
