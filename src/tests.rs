@@ -1,3 +1,5 @@
+extern crate open;
+
 use super::*;
 use futures::future::Future;
 use tokio_core::reactor::Core;
@@ -23,7 +25,8 @@ fn single_http() {
         .base_url(LASTFM_BASE_URL_HTTP)
         .api_key(LASTFM_API_KEY)
         .handle(handle.clone())
-        .build().unwrap();
+        .build()
+        .unwrap();
 
     let mut _me = String::new();
     let info = client.request(&mut _me, Params::GetInfo { user: "xenzh" });
@@ -43,7 +46,8 @@ fn double_https() {
     let client = Client::builder()
         .api_key(LASTFM_API_KEY)
         .handle(handle.clone())
-        .build().unwrap();
+        .build()
+        .unwrap();
 
     let mut _me = String::new();
     let me = client.request(&mut _me, Params::GetInfo { user: "xenzh" });
@@ -70,7 +74,8 @@ fn post_https() {
         .api_key(LASTFM_API_KEY)
         .secret(LASTFM_API_SECRET)
         .handle(handle.clone())
-        .build().unwrap();
+        .build()
+        .unwrap();
 
     let mut _me = String::new();
     let token = client.request(&mut _me, Params::GetToken);
@@ -81,7 +86,7 @@ fn post_https() {
 }
 
 #[test]
-fn auth() {
+fn mobile_auth() {
     let mut core = Core::new().unwrap();
     let handle = core.handle();
 
@@ -89,15 +94,53 @@ fn auth() {
         .api_key(LASTFM_API_KEY)
         .secret(LASTFM_API_SECRET)
         .handle(handle.clone())
-        .build().unwrap();
+        .build()
+        .unwrap();
 
     assert!(!client.is_authenticated());
 
-    let res = client.auth(&mut core, LASTFM_USERNAME, LASTFM_PASSWORD);
+    let res = client.mobile_auth(&mut core, LASTFM_USERNAME, LASTFM_PASSWORD);
 
     println!("Response: {:?}\nIs authenticated? {}\n",
         res,
         client.is_authenticated(),
     );
+    assert!(client.is_authenticated());
+}
+
+#[test]
+fn desktop_auth() {
+    use std::{thread, time};
+
+    let mut core = Core::new().unwrap();
+    let handle = core.handle();
+
+    let mut client = Client::builder()
+        .api_key(LASTFM_API_KEY)
+        .secret(LASTFM_API_SECRET)
+        .handle(handle.clone())
+        .build()
+        .unwrap();
+
+    assert!(client.finalize_desktop_auth(&mut core).is_err());
+    assert!(!client.is_authenticated());
+
+    let auth_url = client.init_desktop_auth(&mut core).unwrap();
+
+    let res = open::that(auth_url.as_str());
+    println!("url open result: {:?}", res);
+    assert!(res.is_ok());
+
+    thread::sleep(time::Duration::from_secs(15));
+
+    let res = client.finalize_desktop_auth(&mut core);
+    println!("finalize_desktop_auth() result: {:?}", res);
+    println!(r#"
+        This test opens lastfm API permissions link in the browser.
+        In order for the test to pass, you have to click "Allow access"
+        on opened page.
+    "#);
+    assert!(res.is_ok());
+
     assert!(client.is_authenticated());
 }

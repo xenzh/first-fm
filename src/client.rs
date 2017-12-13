@@ -12,22 +12,23 @@ use native_tls::TlsConnector;
 use tokio_tls::TlsConnectorExt;
 
 use lastfm::{LastfmType, Request, RequestParams, from_json_str};
-use lastfm::auth::{Params as AuthParams, GetMobileSession};
+use lastfm::auth::{Params as AuthParams, GetMobileSession, GetToken, GetSession};
 
 use async_http_client::prelude::*;
 use async_http_client::HttpRequest;
 
 // ----------------------------------------------------------------
 
-use super::LASTFM_API_BASE_URL;
+use super::{LASTFM_API_BASE_URL, LASTFM_API_AUTH_URL};
 
 use pool::TcpStreamManager;
-use utils::{Error, Result, Response};
+use utils::{Error, Result, Data};
 
 // ----------------------------------------------------------------
 
 pub struct Builder {
     base_url: String,
+    auth_url: String,
     connections: u32,
     api_key: Option<String>,
     secret: Option<String>,
@@ -38,6 +39,7 @@ impl Builder {
     pub fn new() -> Builder {
         Builder {
             base_url: LASTFM_API_BASE_URL.to_owned(),
+            auth_url: LASTFM_API_AUTH_URL.to_owned(),
             connections: 2,
             api_key: None,
             secret: None,
@@ -47,16 +49,22 @@ impl Builder {
 
     pub fn build(self) -> Result<Client> {
         let base_url: Url = self.base_url.parse().map_err(|e| Error::build(e))?;
-        if self.connections < 1 {
-            return Err(Error::build("Need to have at least 1 connection to operate"));
-        }
-        let api_key = self.api_key.ok_or(Error::build("Missing API key"))?;
-        let handle = self.handle.ok_or(Error::build("Missing Tokio reactor core handle"))?;
+        let auth_url: Url = self.auth_url.parse().map_err(|e| Error::build(e))?;
 
-        let addr = base_url
-            .to_socket_addrs()?
-            .next()
-            .ok_or(Error::build("No socket address found in base url"))?;
+        if self.connections < 1 {
+            return Err(Error::build(
+                "Need to have at least 1 connection to operate",
+            ));
+        }
+
+        let api_key = self.api_key.ok_or(Error::build("Missing API key"))?;
+        let handle = self.handle.ok_or(
+            Error::build("Missing Tokio reactor core handle"),
+        )?;
+
+        let addr = base_url.to_socket_addrs()?.next().ok_or(Error::build(
+            "No socket address found in base url",
+        ))?;
 
         let pool = ConnPool::builder()
             .max_size(self.connections)
@@ -65,9 +73,11 @@ impl Builder {
 
         Ok(Client {
             base_url: base_url,
+            auth_url: auth_url,
             api_key: api_key,
             secret: self.secret,
             session: None,
+            token: None,
             handle: handle,
             pool: pool,
         })
@@ -75,6 +85,11 @@ impl Builder {
 
     pub fn base_url(mut self, url: &str) -> Builder {
         self.base_url = url.to_owned();
+        self
+    }
+
+    pub fn auth_url(mut self, url: &str) -> Builder {
+        self.auth_url = url.to_owned();
         self
     }
 
@@ -161,8 +176,10 @@ macro_rules! send {
 
 pub struct Client {
     base_url: Url,
+    auth_url: Url,
     api_key: String,
     secret: Option<String>,
+    token: Option<String>,
     session: Option<String>,
     handle: Handle,
     pool: ConnPool<TcpStreamManager>,
@@ -177,7 +194,7 @@ impl Client {
         &self,
         storage: &'rsp mut String,
         params: P,
-    ) -> Response<'rsp, T>
+    ) -> Data<'rsp, T>
     where
         P: RequestParams + Debug,
         T: LastfmType<'rsp> + Send + 'rsp,
@@ -187,25 +204,60 @@ impl Client {
 
         match Request::new(self.base_url.as_str(), &self.api_key, secret, params).get_url() {
             Ok(url) => {
+                println!("{}", url);
                 if is_write {
                     let base_url = self.base_url.clone();
                     request!(self, url, post!(base_url, url, storage))
                 } else {
-                    request!(self, url, get!(url, storage))            
+                    request!(self, url, get!(url, storage))
                 }
             }
             Err(e) => Box::new(err(From::from(e))),
         }
     }
 
-    pub fn auth(&mut self, core: &mut Core, username: &str, password: &str) -> Result<()> {
+    pub fn mobile_auth(&mut self, core: &mut Core, username: &str, password: &str) -> Result<()> {
         let mut _buf = String::new();
         let auth = self.request(
             &mut _buf,
-            AuthParams::GetMobileSession { username: username, password: password }
+            AuthParams::GetMobileSession {
+                username: username,
+                password: password,
+            },
         );
         let resp: GetMobileSession = core.run(auth)?;
         self.session = Some(resp.key.to_owned());
+        Ok(())
+    }
+
+    pub fn init_desktop_auth(&mut self, core: &mut Core) -> Result<Url> {
+        let mut _buf = String::new();
+        let get_token = self.request(&mut _buf, AuthParams::GetToken);
+        let resp: GetToken = core.run(get_token)?;
+
+        self.token = Some(resp.token.to_owned());
+
+        let mut url = self.auth_url.clone();
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("api_key", &self.api_key);
+            query.append_pair("token", resp.token);
+        }
+
+        Ok(url)
+    }
+
+    pub fn finalize_desktop_auth(&mut self, core: &mut Core) -> Result<()> {
+        let mut _buf = String::new();
+        let token = self.token.take().ok_or(Error::io(
+            IoErrorKind::NotFound,
+            "Desktop session was not initiated (no auth token found)"
+        ))?;
+
+        let get_session = self.request(&mut _buf, AuthParams::GetSession { token: &token });
+        let resp: GetSession = core.run(get_session)?;
+        self.session = Some(resp.key.to_owned());
+
         Ok(())
     }
 

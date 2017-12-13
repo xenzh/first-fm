@@ -13,7 +13,8 @@ use lastfm::error::Error as LastfmError;
 // ----------------------------------------------------------------
 
 pub type Result<T> = StdResult<T, Error>;
-pub type Response<'de, T> = Box<Future<Item=T, Error=Error> + Send + 'de>;
+//pub type Response<T> = Box<Future<Item=T, Error=Error> + Send>;
+pub type Data<'de, T> = Box<Future<Item = T, Error = Error> + Send + 'de>;
 
 // ----------------------------------------------------------------
 

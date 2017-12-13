@@ -12,3 +12,6 @@ native-tls = "0.1"
 tokio-tls = "0.1"
 lastfm-parse-rs = { git = "https://github.com/xenzh/lastfm-parse-rs" }
 async-http-client = { git = "https://github.com/xenzh/async-http-client" }
+
+[dev-dependencies]
+open = "1.2"
