@@ -144,3 +144,65 @@ fn desktop_auth() {
 
     assert!(client.is_authenticated());
 }
+
+#[test]
+fn write_album_add_tags() {
+    use lastfm::album::{Params, AddTags};
+
+    let mut core = Core::new().unwrap();
+    let handle = core.handle();
+
+    let mut client = Client::builder()
+        .api_key(LASTFM_API_KEY)
+        .secret(LASTFM_API_SECRET)
+        .handle(handle.clone())
+        .build()
+        .unwrap();
+
+    assert!(client.mobile_auth(&mut core, LASTFM_USERNAME, LASTFM_PASSWORD).is_ok());
+
+    let mut _buf = String::new();
+    let add_tags = client.request(&mut _buf, Params::AddTags {
+        artist: "iamthemorning",
+        album: "~",
+        tags: "acoustic, chamber pop, progressive rock, female vocalists",
+    });
+
+    let resp: Result<AddTags> = core.run(add_tags);
+    println!("Response: {:?}", resp);
+    assert!(resp.is_ok());
+}
+
+#[test]
+#[allow(non_snake_case)]
+fn write_track_update_now_playing() {
+    use lastfm::track::{Params, UpdateNowPlaying};
+
+    let mut core = Core::new().unwrap();
+    let handle = core.handle();
+
+    let mut client = Client::builder()
+        .api_key(LASTFM_API_KEY)
+        .secret(LASTFM_API_SECRET)
+        .handle(handle.clone())
+        .build()
+        .unwrap();
+
+    assert!(client.mobile_auth(&mut core, LASTFM_USERNAME, LASTFM_PASSWORD).is_ok());
+
+    let mut _buf = String::new();
+    let nowplaying = client.request(&mut _buf, Params::UpdateNowPlaying {
+        artist: "iamthemorning",
+        track: "touching ii",
+        album: Some("~"),
+        trackNumber: Some(9),
+        context : None,
+        mbid: None,
+        duration: Some(244),
+        albumArtist : None,
+    });
+
+    let resp: Result<UpdateNowPlaying> = core.run(nowplaying);
+    println!("Response: {:?}", resp);
+    assert!(resp.is_ok());
+}
