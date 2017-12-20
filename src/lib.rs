@@ -1,7 +1,7 @@
 extern crate url;
-extern crate r2d2;
 extern crate futures;
 extern crate tokio_core;
+extern crate tokio_io;
 extern crate native_tls;
 extern crate tokio_tls;
 
@@ -9,8 +9,6 @@ extern crate lastfm_parse_rs as lastfm;
 extern crate async_http_client;
 
 // ----------------------------------------------------------------
-
-mod pool;
 
 /// Contains return types such as errors, results and futures
 pub mod utils;

@@ -206,9 +206,10 @@ fn write_track_update_now_playing() {
     println!("Response: {:?}", resp);
     assert!(resp.is_ok());
 }
+
 #[test]
-fn write_album_add_tags() {
-    use lastfm::album::{Params, AddTags};
+fn write_track_scrobble_raw() {
+    use lastfm::track::{Params, ScrobbleTrack, Scrobble};
 
     let mut core = Core::new().unwrap();
     let handle = core.handle();
@@ -222,48 +223,24 @@ fn write_album_add_tags() {
 
     assert!(client.mobile_auth(&mut core, LASTFM_USERNAME, LASTFM_PASSWORD).is_ok());
 
-    let mut _buf = String::new();
-    let add_tags = client.request(&mut _buf, Params::AddTags {
-        artist: "iamthemorning",
-        album: "~",
-        tags: "acoustic, chamber pop, progressive rock, female vocalists",
-    });
+    // Single
+    let mut _single = String::new();
+    let single = vec!(ScrobbleTrack::new("bloody woods".to_string(), "intro".to_string(), 1513719209));
+    let scrobble_single = client.request(&mut _single, Params::Scrobble { batch: &single });
 
-    let resp: Result<AddTags> = core.run(add_tags);
-    println!("Response: {:?}", resp);
+    let resp: Result<Scrobble> = core.run(scrobble_single);
+    println!("\nResponse (single): {:?}\n", resp);
     assert!(resp.is_ok());
-}
 
-#[test]
-#[allow(non_snake_case)]
-fn write_track_update_now_playing() {
-    use lastfm::track::{Params, UpdateNowPlaying};
+    // Batch
+    let mut _batch = String::new();
+    let batch = vec!(
+        ScrobbleTrack::new("iamthemorning".to_string(), "touching ii".to_string(), 1513719309),
+        ScrobbleTrack::new("schtimm".to_string(), "sunotic drive".to_string(), 1513719399)
+    );
+    let scrobble_batch = client.request(&mut _batch, Params::Scrobble { batch: &batch });
 
-    let mut core = Core::new().unwrap();
-    let handle = core.handle();
-
-    let mut client = Client::builder()
-        .api_key(LASTFM_API_KEY)
-        .secret(LASTFM_API_SECRET)
-        .handle(handle.clone())
-        .build()
-        .unwrap();
-
-    assert!(client.mobile_auth(&mut core, LASTFM_USERNAME, LASTFM_PASSWORD).is_ok());
-
-    let mut _buf = String::new();
-    let nowplaying = client.request(&mut _buf, Params::UpdateNowPlaying {
-        artist: "iamthemorning",
-        track: "touching ii",
-        album: Some("~"),
-        trackNumber: Some(9),
-        context : None,
-        mbid: None,
-        duration: Some(244),
-        albumArtist : None,
-    });
-
-    let resp: Result<UpdateNowPlaying> = core.run(nowplaying);
+    let resp: Result<Scrobble> = core.run(scrobble_batch);
     println!("Response: {:?}", resp);
     assert!(resp.is_ok());
 }

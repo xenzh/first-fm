@@ -1,12 +1,11 @@
 use std::fmt::Debug;
 use std::io::ErrorKind as IoErrorKind;
-use std::net::ToSocketAddrs;
+use std::net::{ToSocketAddrs, SocketAddr};
 
 use url::Url;
 
-use r2d2::Pool as ConnPool;
-
 use tokio_core::reactor::{Core, Handle};
+use tokio_core::net::TcpStreamNew;
 
 use native_tls::TlsConnector;
 use tokio_tls::TlsConnectorExt;
@@ -20,15 +19,13 @@ use async_http_client::HttpRequest;
 // ----------------------------------------------------------------
 
 use super::{LASTFM_API_BASE_URL, LASTFM_API_AUTH_URL};
-
-use pool::TcpStreamManager;
 use utils::{Error, Result, Data};
 
 // ----------------------------------------------------------------
 
 /// Client builder
 ///
-/// Base, desktop auth urls and TCP connection pool size are set to defaults.
+/// Base and desktop auth urls are automatically set to defaults.
 ///
 /// To make `read` calls API key and Tokio reactor core handle have to be set.
 ///
@@ -36,7 +33,6 @@ use utils::{Error, Result, Data};
 pub struct Builder {
     base_url: String,
     auth_url: String,
-    connections: u32,
     api_key: Option<String>,
     secret: Option<String>,
     handle: Option<Handle>,
@@ -48,7 +44,6 @@ impl Builder {
         Builder {
             base_url: LASTFM_API_BASE_URL.to_owned(),
             auth_url: LASTFM_API_AUTH_URL.to_owned(),
-            connections: 2,
             api_key: None,
             secret: None,
             handle: None,
@@ -60,12 +55,6 @@ impl Builder {
         let base_url: Url = self.base_url.parse().map_err(|e| Error::build(e))?;
         let auth_url: Url = self.auth_url.parse().map_err(|e| Error::build(e))?;
 
-        if self.connections < 1 {
-            return Err(Error::build(
-                "Need to have at least 1 connection to operate",
-            ));
-        }
-
         let api_key = self.api_key.ok_or(Error::build("Missing API key"))?;
         let handle = self.handle.ok_or(
             Error::build("Missing Tokio reactor core handle"),
@@ -75,20 +64,15 @@ impl Builder {
             "No socket address found in base url",
         ))?;
 
-        let pool = ConnPool::builder()
-            .max_size(self.connections)
-            .build(TcpStreamManager::new(addr))
-            .map_err(|e| Error::build(e))?;
-
         Ok(Client {
             base_url: base_url,
             auth_url: auth_url,
+            socket_addr: addr,
             api_key: api_key,
             secret: self.secret,
             session: None,
             token: None,
             handle: handle,
-            pool: pool,
         })
     }
 
@@ -101,12 +85,6 @@ impl Builder {
     /// Updates base desktop auth url
     pub fn auth_url(mut self, url: &str) -> Builder {
         self.auth_url = url.to_owned();
-        self
-    }
-
-    /// Updates TCP connection pool size
-    pub fn connections(mut self, connection_count: u32) -> Builder {
-        self.connections = connection_count;
         self
     }
 
@@ -134,15 +112,17 @@ impl Builder {
 macro_rules! request {
     ($client:ident, $url:expr, $method:expr) => {
         match $url.scheme() {
-            "http" => Box::new(result($client.get_stream()).and_then($method)),
+            "http" => {
+                Box::new($client.get_stream().map_err(From::from).and_then($method))
+            },
             "https" => {
                 let tls = TlsConnector::builder().unwrap().build().unwrap();
-                Box::new(result($client.get_stream()).and_then(move |stream| {
+                Box::new($client.get_stream().map_err(From::from).and_then(move |stream| {
                     tls.connect_async($url.domain().unwrap(), stream)
                         .map_err(From::from)
                         .and_then($method)
                 }))
-            }
+            },
             _ => Box::new(err(Error::io(IoErrorKind::InvalidInput, "no scheme in url"))),
         }
     }
@@ -168,7 +148,7 @@ macro_rules! post {
 }
 
 macro_rules! send {
-    ($stream:ident, $buf:ident) => {
+    ($stream:expr, $buf:ident) => {
         |req| {
             req.send($stream).map_err(From::from).and_then(move |res| {
                 if let (Some(resp), _) = res {
@@ -195,12 +175,12 @@ macro_rules! send {
 pub struct Client {
     base_url: Url,
     auth_url: Url,
+    socket_addr: SocketAddr,
     api_key: String,
     secret: Option<String>,
     token: Option<String>,
     session: Option<String>,
     handle: Handle,
-    pool: ConnPool<TcpStreamManager>,
 }
 
 impl Client {
@@ -211,15 +191,15 @@ impl Client {
 
     /// Main entry point of low-level `request` client API.
     ///
-    /// Fetches given last.fm data object based on given request parameters.
+    /// Fetches last.fm data objects based on given request parameters.
     /// Parameters type has to implement `RequestParams` trait and data type
-    /// has to implement LastfmType - both these traits and itheir implementations
+    /// has to implement `LastfmType` - both these traits and itheir implementations
     /// can be found in [lastfm-parse-rs crate](https://xenzh.github.io/lastfm-parse-rs/).
     ///
     /// This method returns a future that won't ever resolve unless consumed by event loop.
     ///
     /// Note that this method somewhat awkwardly requires a mutable string to be supplied.
-    /// Reason for this is that all lastfm_parse_rs types heavily rely on so-called zero-cost
+    /// Reason for this is that all `lastfm_parse_rs` types heavily rely on so-called zero-cost
     /// deserialization recently introduced in serde. The idea is that instead of copying, string
     /// field values are borrowed directly from raw response body.
     /// This sounds like a great performance saving at cost of some convenience: response body
@@ -262,7 +242,6 @@ impl Client {
         let rq = Request::new(self.base_url.as_str(), &self.api_key, secret, session, params);
         match rq.get_url() {
             Ok(url) => {
-                println!("{}", url);
                 if is_post {
                     let base_url = self.base_url.clone();
                     request!(self, url, post!(base_url, url, storage))
@@ -348,10 +327,7 @@ impl Client {
         self.session.is_some()
     }
 
-    fn get_stream(&self) -> Result<TcpStream> {
-        let stream = self.pool.get().map_err(
-            |e| Error::io(IoErrorKind::Other, e),
-        )?;
-        TcpStream::from_stream(stream.try_clone()?, &self.handle).map_err(From::from)
+    fn get_stream(&self) -> TcpStreamNew {
+        TcpStream::connect(&self.socket_addr, &self.handle)
     }
 }
