@@ -1,3 +1,5 @@
+#![feature(try_from)]
+
 extern crate url;
 extern crate futures;
 extern crate tokio_core;
@@ -15,6 +17,9 @@ pub mod utils;
 
 /// Contains API client and builder structures
 pub mod client;
+
+/// Contains read-to-use scrobbler, based on a client;
+pub mod scrobbler;
 
 #[cfg(test)]
 mod tests;
